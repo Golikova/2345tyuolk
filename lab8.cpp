@@ -6,7 +6,6 @@
 #include "mpi.h"
 using namespace std;
 
-#define SEED 5
 #define MASTER 0
 
 FILE *fp;
@@ -19,8 +18,8 @@ int	rankNum,    // айди процесса
 	numtasks,    // количество процессов
   start,       // начальная вершина
   size,        // размер процесса
-	initNode=0,  //главный процесс
-	actNode,
+	initNode=0,  //корневая вершина
+	currentNode,
 	totalVisited=0;
 
 void loadFile(char c[]);
@@ -36,21 +35,23 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD,&rankNum);
 	MPI_Comm_size(MPI_COMM_WORLD,&numtasks);
 
-	char c[]="graphs/bcs.txt";
+	char c[]="graphs/graph.txt";
 	loadFile(c);
 	MPI_Barrier(MPI_COMM_WORLD);
 	splitWork();
 	//начать мерять время
 	double ti= MPI_Wtime();
+
 	if(rankNum==MASTER){
  		printGraph();
-		actNode=initNode;
+		currentNode=initNode;
 	}
-	//Broadcast actual Node
-	MPI_Bcast(&actNode,	1,	MPI_INT, 0,	MPI_COMM_WORLD); 
 
-	parents[actNode]=-1;
-	minDist[actNode]=0;
+	//Broadcast actual Node
+	MPI_Bcast(&currentNode,	1,	MPI_INT, 0,	MPI_COMM_WORLD); 
+
+	parents[currentNode]=-1;
+	minDist[currentNode]=0;
 
 	while(totalVisited<num){
 		updateMinDist();
@@ -61,7 +62,7 @@ int main(int argc, char *argv[]) {
 			reportToMaster();
 
 		if(rankNum==MASTER){
-			visited[actNode]=1;
+			visited[currentNode]=1;
 			totalVisited++;
 	    double min=DBL_MAX;
 	    int index=0;
@@ -71,11 +72,11 @@ int main(int argc, char *argv[]) {
 	        index=i;
 	      }
 	    }
-			actNode=index;
+			currentNode=index;
 		}
 
 		//Broadcast actual Node
-		MPI_Bcast(&actNode,1,MPI_INT,0,MPI_COMM_WORLD);
+		MPI_Bcast(&currentNode,1,MPI_INT,0,MPI_COMM_WORLD);
 		//Broadcast arreglo de distancias minimas
 		MPI_Bcast(minDist,num,MPI_DOUBLE,0,MPI_COMM_WORLD);
 		//Broadcast arreglo de distancias minimas
@@ -190,10 +191,10 @@ void printGraph(){
 
 void updateMinDist(){
 	for(int i=start;i<start+size;i++){
-		if(graph[actNode][i]<DBL_MAX){
-			if((graph[actNode][i]+minDist[actNode])<minDist[i]){
-				minDist[i]=graph[actNode][i]+minDist[actNode];
-				parents[i]=actNode;
+		if(graph[currentNode][i]<DBL_MAX){
+			if((graph[currentNode][i]+minDist[currentNode])<minDist[i]){
+				minDist[i]=graph[currentNode][i]+minDist[currentNode];
+				parents[i]=currentNode;
 			}
 		}
 	}
