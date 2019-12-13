@@ -3,6 +3,7 @@
 #include <cfloat>
 #include<stdlib.h>
 #include <time.h>
+#include <string>
 #include "mpi.h"
 using namespace std;
 
@@ -10,110 +11,99 @@ using namespace std;
 
 FILE *fp;
 double **graph=NULL;
-double *minDist=NULL;
-int *parents=NULL;
+double *graphArray=NULL;
+double *minDistance=NULL;
+int *transitionals=NULL;
 int *visited=NULL;
-int num=0;
-int	rankNum,    // айди процесса 
+int num;
+int	rankNum,     // айди процесса 
 	numtasks,    // количество процессов
-  start,       // начальная вершина
-  size,        // размер процесса
+  	start,       // начальная вершина
+  	size,        // размер процесса
 	initNode=0,  //корневая вершина
-	currentNode,
+	currentNode, //текущая вершина
 	totalVisited=0;
 
-void loadFile(char c[]);
-void printGraph();
-void splitWork();
-void updateMinDist();
-void collectFromWorkers();
-void reportToMaster();
+int edgesNum;
+int* sourceNode;
+int* destNode;
 
-int main(int argc, char *argv[]) {
+char fileName[]="graphs/graph.txt";
+char resultFile[] = "graphs/resultset.dat";
 
-	MPI_Init(&argc,&argv);
-	MPI_Comm_rank(MPI_COMM_WORLD,&rankNum);
-	MPI_Comm_size(MPI_COMM_WORLD,&numtasks);
+void initGraph() {
 
-	char c[]="graphs/graph.txt";
-	loadFile(c);
-	MPI_Barrier(MPI_COMM_WORLD);
-	splitWork();
-	//начать мерять время
-	double ti= MPI_Wtime();
+	graph = (double**)malloc(num*sizeof(double*));
+	minDistance=(double*)malloc(num*sizeof(double));
+	transitionals=(int *)malloc(num*sizeof(int));
+	
+	if(rankNum==MASTER)
+  	visited=(int *)malloc(num*sizeof(int));
 
-	if(rankNum==MASTER){
- 		printGraph();
-		currentNode=initNode;
+	// создаем матрицу графа
+	for(int i=0;i<num;i++){
+			graph[i] = (double*)malloc(num*sizeof(double));
+			for(int j=0;j<num;j++){
+	      		// инициализируем массив графа на бесконечностях
+				graph[i][j]=DBL_MAX;
+			}
+		    // инициализируем вектор расстояний на бесконечностях
+		    minDistance[i]=DBL_MAX;
+			transitionals[i]=i;
+			if(rankNum==MASTER)
+	    	visited[i]=0;
 	}
 
-	//Broadcast actual Node
-	MPI_Bcast(&currentNode,	1,	MPI_INT, 0,	MPI_COMM_WORLD); 
+  	//строим ребра
+  	sourceNode =(int*)malloc(edgesNum*sizeof(int));
+  	destNode =(int*)malloc(edgesNum*sizeof(int));
 
-	parents[currentNode]=-1;
-	minDist[currentNode]=0;
+	for (int i = 0; i < edgesNum; i++)
+  	{
+  			sourceNode[i] = 0;
+  			destNode[i] = 0;
+  	}
 
-	while(totalVisited<num){
-		updateMinDist();
+	srand(time(0));
 
-		if(rankNum==MASTER)
-			collectFromWorkers();
-		else
-			reportToMaster();
+  	for (int i = 0; i < edgesNum; i++)
+  	{
+  		while (sourceNode[i] == destNode[i]){ 			
+  			sourceNode[i] = rand()%num;
+  			destNode[i] = rand()%num;
+  		}  		
+  	}
 
-		if(rankNum==MASTER){
-			visited[currentNode]=1;
-			totalVisited++;
-	    double min=DBL_MAX;
-	    int index=0;
-	    for(int i=0;i<num;i++){
-	      if(visited[i]!=1 && minDist[i]<min){
-	        min=minDist[i];
-	        index=i;
-	      }
-	    }
-			currentNode=index;
-		}
+  	for (int i = 0; i < edgesNum; i++)
+  	{
+  		int edgeWeight = rand()%15;
+  		graph[sourceNode[i]][destNode[i]] = edgeWeight;
+  		graph[destNode[i]][sourceNode[i]] = edgeWeight;
+  	}
 
-		//Broadcast actual Node
-		MPI_Bcast(&currentNode,1,MPI_INT,0,MPI_COMM_WORLD);
-		//Broadcast arreglo de distancias minimas
-		MPI_Bcast(minDist,num,MPI_DOUBLE,0,MPI_COMM_WORLD);
-		//Broadcast arreglo de distancias minimas
-		MPI_Bcast(parents,num,MPI_INT,0,MPI_COMM_WORLD);
-		//Broadcast totalVisited
-		MPI_Bcast(&totalVisited,1,MPI_INT,0,MPI_COMM_WORLD);
-
-	}
-	//Termina de medir el tiempo
-	double tf= MPI_Wtime();
-	if(rankNum==MASTER){
-		//Imprime el arreglo de distancias minimas
-		printf("Минимальные расстояния [");
-		for(int i=0;i<num-1;i++)
-			printf("%.2f, ",minDist[i]==DBL_MAX ? -1:minDist[i]);
-		printf("%.2f]\n",minDist[num-1]==DBL_MAX ? -1:minDist[num-1]);
-
-		//Imprim el arreglo de padres
-		printf("Промежуточных вершин [");
-		for(int i=0;i<num-1;i++)
-			printf("%d, ",parents[i]);
-		printf("%d]\n",parents[num-1]);
-
-		//Imprime el tiempo de ejecucion
-		printf("Время выполнения: %f\n",(tf-ti) );
-	}
-
-	MPI_Barrier(MPI_COMM_WORLD);
-	free(graph);
-	free(minDist);
-	free(parents);
-	free(visited);
-	MPI_Finalize();
-  return 0;
 }
 
-void loadFile(char c[]) {
+void writeFile(int nodes, float edges, long double time) {
+	if((fp = fopen (resultFile, "a" ))==NULL) {
+ 		printf("Не удалось прочитать файл\n");
+ 	}
+
+ 	string nodesStr = to_string(nodes);
+ 	string edgesStr = to_string(edges);
+ 	string timeStr = to_string(time);
+
+ 	fputs(nodesStr.c_str(), fp);
+ 	fputs("\t", fp);
+ 	fputs(edgesStr.c_str(), fp);
+ 	fputs("\t", fp);
+ 	fputs(timeStr.c_str(), fp);
+ 	fputs("\n", fp);
+
+ 	fclose(fp);
+
+}
+
+void readFile(char c[]) {
 	
  	if((fp = fopen (c, "r" ))==NULL) {
  		printf("Не удалось прочитать файл\n");
@@ -122,8 +112,8 @@ void loadFile(char c[]) {
  	fscanf(fp, "%d" ,&num);
     
  	graph = (double**)malloc(num*sizeof(double*));
-  	minDist=(double*)malloc(num*sizeof(double));
-  	parents=(int *)malloc(num*sizeof(int));
+  	minDistance=(double*)malloc(num*sizeof(double));
+  	transitionals=(int *)malloc(num*sizeof(int));
 
 	if(rankNum==MASTER)
   	visited=(int *)malloc(num*sizeof(int));
@@ -136,8 +126,8 @@ void loadFile(char c[]) {
 				graph[i][j]=DBL_MAX;
 			}
 		    // инициализируем вектор расстояний на бесконечностях
-		    minDist[i]=DBL_MAX;
-			parents[i]=i;
+		    minDistance[i]=DBL_MAX;
+			transitionals[i]=i;
 			if(rankNum==MASTER)
 	    	visited[i]=0;
 	}
@@ -153,75 +143,231 @@ void loadFile(char c[]) {
 
 }
 
-void splitWork() {
+void calcTaskAmount() {
 
-	int nmin, nmax, nnum;
-
+	int nmin, nleft, nnum;
 	//определяем размер процесса
 	nmin=num/numtasks;
-	nmax=num%numtasks;
+	nleft=num%numtasks;
 	int k=0;
 
 	for (int i = 0; i < numtasks; i++) {
-	    nnum = (i < nmax) ? nmin + 1 : nmin;
-
+	    nnum = (i < nleft) ? nmin + 1 : nmin;
 	    if(i==rankNum){
 	       start=k;
 	       size=nnum;
-	       printf ("Процесс№%2d  начал с вершины %2d  размер =%2d \n", rankNum,start, size);
+	      // printf ("Процесс№%2d  считает с вершины %2d до %2d \n", rankNum,start, start+size);
 	    }
-
 	  	k+=nnum;
 	}
 
 }
 
 void printGraph(){
-	//Imprimimos el grafo
+
  	for(int i = 0; i < num; i++){
  		for (int j = 0; j < num; ++j){
       if(graph[i][j]!=DBL_MAX)
-        printf("%.2f\t",graph[i][j]);
+        printf("{%.0f}\t",graph[i][j]);
       else
-        printf("INF\t");
+        printf("{-}\t");
     }
     printf("\n");
  	}
+
 }
 
-void updateMinDist(){
+void updateminDistance(){
+
 	for(int i=start;i<start+size;i++){
+
 		if(graph[currentNode][i]<DBL_MAX){
-			if((graph[currentNode][i]+minDist[currentNode])<minDist[i]){
-				minDist[i]=graph[currentNode][i]+minDist[currentNode];
-				parents[i]=currentNode;
+			if((graph[currentNode][i]+minDistance[currentNode])<minDistance[i]){
+				minDistance[i]=graph[currentNode][i]+minDistance[currentNode];
+				transitionals[i]=currentNode;
 			}
 		}
 	}
+
 }
-void collectFromWorkers(){
+
+
+void recieveDataFromSlave(){
+
 	MPI_Status status;
 
-  int buffer[2];
-  for(int i=1;i<numtasks;i++){
-    //Recibe parametros de los trabajadores
+  	int buffer[2];
+  	for(int i=1;i<numtasks;i++){
     MPI_Recv(buffer,2,MPI_INT,i,0,MPI_COMM_WORLD,&status);
     int iStart=buffer[0];
     int iSize=buffer[1];
-    //Recibe la parte del arreglo de distancias minimas de cada trabajador
-    MPI_Recv(&minDist[iStart],iSize,MPI_DOUBLE,i,1,MPI_COMM_WORLD,&status);
-		//Recibe la parte del arreglo de padres de cada trabajador
-    MPI_Recv(&parents[iStart],iSize,MPI_INT,i,2,MPI_COMM_WORLD,&status);
+    MPI_Recv(&minDistance[iStart],iSize,MPI_DOUBLE,i,1,MPI_COMM_WORLD,&status);
+    MPI_Recv(&transitionals[iStart],iSize,MPI_INT,i,2,MPI_COMM_WORLD,&status);
   }
+
 }
-void reportToMaster(){
+
+void sendDataToRoot(){
+
   int buffer[2];
   buffer[0]=start;
   buffer[1]=size;
-  //Envia los parametros al proceso Maestro
   MPI_Send(buffer,2,MPI_INT,0,0,MPI_COMM_WORLD);
-  //Envia su parte del arrgelo de distancias minimas al proceso Maestro
-  MPI_Send(&minDist[start],size,MPI_DOUBLE,0,1,MPI_COMM_WORLD);
-	//Envia su parte del arrgelo de padres al proceso Maestro
-  MPI_Send(&parents[start],size,MPI_INT,0,2,MPI_COMM_WORLD);
+  MPI_Send(&minDistance[start],size,MPI_DOUBLE,0,1,MPI_COMM_WORLD);
+  MPI_Send(&transitionals[start],size,MPI_INT,0,2,MPI_COMM_WORLD);
+
 }
+
+int main(int argc, char *argv[]) {
+
+	MPI_Init(&argc,&argv);
+	MPI_Comm_rank(MPI_COMM_WORLD,&rankNum);
+	MPI_Comm_size(MPI_COMM_WORLD,&numtasks);
+
+	float part = 0;
+	num = 2;
+	edgesNum =2;
+
+	while (num < 150) {
+
+		part = 0.9;
+		while ((edgesNum < (num*num)-num) &&
+				(part > 0.01)) {
+
+	//начать мерять время
+	long double ti= MPI_Wtime();
+
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	
+	if (rankNum == MASTER)
+	{
+		/*cout << "Количество вершин: ";
+		cin >> num;
+		cout << "Количество ребер: ";
+		cin >> edgesNum;*/
+		initGraph();
+	}
+
+	MPI_Bcast(&num,1,MPI_INT,0,MPI_COMM_WORLD);
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	graphArray = (double*)malloc((num*num)*sizeof(double));
+
+	if (rankNum == MASTER) {
+		//превращаем матрижу смежности графа в одномерный массив
+		int ind=0;
+		for (int i = 0; i < num; i++)
+		{
+			for (int j = 0; j < num; j++)
+			{
+				graphArray[ind] = graph[i][j];
+				ind++;
+			}
+		}
+
+		//printGraph();
+	}
+
+	MPI_Bcast(graphArray, num*num, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	if (rankNum != MASTER) {
+		graph = (double**)malloc(num*sizeof(double*));
+	  	minDistance=(double*)malloc(num*sizeof(double));
+	  	transitionals=(int *)malloc(num*sizeof(int));
+		int ind=0;
+		for (int i = 0; i < num; i++)
+		{
+			graph[i] = (double*)malloc(num*sizeof(double));
+			minDistance[i]=DBL_MAX;
+			transitionals[i]=i;
+			for (int j = 0; j < num; j++)
+			{
+				graph[i][j] = graphArray[ind];
+				ind++;
+			}
+		}
+	}
+
+	calcTaskAmount();
+	transitionals[currentNode]=-1;
+	minDistance[currentNode]=0;
+
+	while(totalVisited<num){
+
+		updateminDistance();
+
+		if(rankNum==MASTER){
+			recieveDataFromSlave();
+			visited[currentNode]=1;
+			totalVisited++;
+		    double min=DBL_MAX;
+		    int index=0;
+
+		    for(int i=0;i<num;i++){
+		      if(visited[i]!=1 && minDistance[i]<min){
+		        min=minDistance[i];
+		        index=i;
+		      }
+		    }
+
+			currentNode=index;
+		}
+		else {
+			sendDataToRoot();
+		}
+
+		MPI_Bcast(&currentNode,1,MPI_INT,0,MPI_COMM_WORLD);
+		MPI_Bcast(minDistance,num,MPI_DOUBLE,0,MPI_COMM_WORLD);
+		MPI_Bcast(transitionals,num,MPI_INT,0,MPI_COMM_WORLD);
+		MPI_Bcast(&totalVisited,1,MPI_INT,0,MPI_COMM_WORLD);
+	}
+
+	//закончиить мерить время
+	long double tf= MPI_Wtime();
+
+	if(rankNum==MASTER){
+/*		printf("Минимальные расстояния [");
+		for(int i=0;i<num-1;i++)
+			printf("%.2f, ",minDistance[i]==DBL_MAX ? -1:minDistance[i]);
+		printf("%.2f]\n",minDistance[num-1]==DBL_MAX ? -1:minDistance[num-1]);
+
+		printf("Промежуточных вершин [");
+		for(int i=0;i<num-1;i++)
+			printf("%d, ",transitionals[i]);
+		printf("%d]\n",transitionals[num-1]);
+*/
+		cout << "Время выполнения: " << (tf-ti) << endl;
+
+
+		writeFile(num,(1-part)*100, tf-ti);
+	}
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	free(graphArray);
+	free(graph);
+	free(minDistance);
+	free(transitionals);
+	free(visited);
+	free(sourceNode);
+	free(destNode);
+
+	part = part - 0.1;
+
+	edgesNum = num/part;
+	cout << "Ребер " << edgesNum << "Вершин: " << num << "Часть: " << part <<  endl;
+	}
+	part = 0.9;
+	edgesNum = 2;
+	num++;
+}
+
+	MPI_Finalize();
+  return 0;
+}
+
+
+
+
+
